@@ -23,7 +23,6 @@ def formatter(n, p):
     num : float
         Specified value rounded to specified precision.  
     """
-
     precision = p
     num = f"{n:.{precision}e}"
     return num
@@ -111,6 +110,19 @@ def exportToCSV(fp, fields, formatted_data):
 
 
 def stringArraytoFloatArray(str_arry):
+    """
+    Takes an array of numbers that are formatted as strings and returns the same array but with all the elements converted to floats.
+    
+    Parameters
+    ----------
+    str_ary : [str]
+        The array of strings to be converted to floats.
+
+    Returns
+    -------
+    num_arry : [float]
+        An array containing the same values as str_arry, but now represented as floats.
+    """
     l = len(str_arry)
     num_arry = np.zeros(l)
     for i in range(0,l):
@@ -119,44 +131,120 @@ def stringArraytoFloatArray(str_arry):
     
 
 def stringToPandasSeries(strg, delimiter):
+    """
+    Using the specified delimiter, converts a string into a pandas series. 
+    
+    Parameters
+    ----------
+    strg : str
+        The string to be converted to a pandas series.
+    delimiter : str
+        The character on which to split the string. 
+
+    Returns
+    -------
+    series : pandas.Series
+        A pandas series containing the data from the string after splitting it on the specified delimiter.
+    """
     #assumes a string where data can be broken up by a delimiter
-    #check if there is a newline at the end of the string and remove if present
-    strg = strg.replace('\n', '')
+    strg = strg.replace('\n', '')#check if there is a newline at the end of the string and remove if present
     arry = strg.split(delimiter)
     series = pd.Series(arry)
     return series
 
 def dtStringForFilename():
+    """
+    Returns the current datetime as a string, formatted for use in a filename.  
+    
+    Parameters
+    ---------- 
+
+    Returns
+    -------
+    fn : str
+        A string representing the current datatime with ':' replaced with '_' and ' ' relaced with '.'.
+    """
     fn = str(datetime.datetime.today())
     fn = fn.replace(':', '_')
     fn = fn.replace(' ', '-')
     return fn
 
-#takes a time stamp (float) and converts it into an array in the format [date, time]
 def timestampToArray(ts):
+    """
+    Takes a time stamp and converts it into an array in the format [date, time]. 
+    
+    Parameters
+    ---------- 
+    ts: float
+        A float representing the timestamp. 
+
+    Returns
+    -------
+    dt_arry : [str]
+        A string array of the form [date, time].
+    """
     dt_obj = datetime.datetime.fromtimestamp(ts)
     dt_arry = str(dt_obj).split(' ')
     return dt_arry
 
-#takes an array of timestamps and converts it to two arrays, one containing all the dates, the other containing all the times
 def formatTimestampsForCSV(times):
+    """
+    Takes an array of timestamps and converts it to two arrays, one containing all the dates, the other containing all the times, to be used in data collection files. 
+    
+    Parameters
+    ---------- 
+    times: [float]
+        An array of floats representing timestamps. 
+
+    Returns
+    -------
+    arry_0 : [str]
+        A string array containing the collection dates.
+    arry_1: [str]
+        A string array containing the collection times.
+
+    """
     arry_0 = []
     arry_1 = []
-
     for x in times:
         temp = timestampToArray(x)
         arry_0.append(temp[0])
         arry_1.append(temp[1])
-    
     return (arry_0, arry_1)
 
 def get_connected_instruments(rm):
+    """
+    Gets a list of all instruments connected to the computer via NiVisa. 
+    
+    Parameters
+    ---------- 
+    rm: visa.ResourceManager
+        A resource manager object for NI devices.  
+
+    Returns
+    -------
+    instrments : [str]
+        A string array containing the addresses of each instrument connected to the computer.
+    """
     instrments = []
     for r in rm.list_resources():
         instrments.append(r)
     return instrments
 
 def get_daq_ao_channels(system):
+    """
+    Gets a list of all available DAQ analog output channels.  
+    
+    Parameters
+    ---------- 
+    system: sys.System
+        A system object representing the local system.  
+
+    Returns
+    -------
+    daq_channels : [str]
+        A string array of the available analog output channels from any DAQ device connected to the computer. Note that this includes both virtual and physical DAQs.
+    """
     daq_channels = []
     for device in system.devices: 
         for channel in device.ao_physical_chans.channel_names:
