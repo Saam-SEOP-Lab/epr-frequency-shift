@@ -2,7 +2,9 @@ import nidaqmx
 import time
 import pyvisa as visa
 import pandas as pd
-import nidaqmx.system as sys
+import nidaqmx.system as syst
+import sys
+import multiprocessing
 
 import kse_experiment_utils as kse
 import utilities as util
@@ -27,11 +29,13 @@ class MainWindow(QMainWindow):
         ### INTERNAL VARIABLES NEEDED TO RUN THE APP ###################################################
         # resource manager, system settings, options for dropdowns
         self.rm = visa.ResourceManager()
-        self.system = sys.System.local()
+        self.system = syst.System.local()
         self.my_instruments = util.get_connected_instruments(self.rm) #list of available instruments 
         self.ao_daq_channels = util.get_daq_ao_channels(self.system) #list of analog out channels available from virtual and physical daqs
         self.metal_types = ['rb85', 'rb87','cs133']
         self.energy_levels = ['high', 'low']
+        self.inputs_verifed = False
+        self.all_processes = []
         # Collection parameters
         ## parameters that will remain hard coded
         self.trig_count = 1
@@ -49,7 +53,7 @@ class MainWindow(QMainWindow):
         self.error_threshold = 3
         self.gpib_channel_no = 1 #the channel number for the GPIB connection from the dmm. this can be set on the dmm to anything between 1 and 16
         #user entered fields required to start collection
-        self.folder = ''#'Data\\kseExperiment' #defaults to saving here if nothing is specified. 
+        self.folder = 'Data\\kseExperiment' #defaults to saving here if nothing is specified. 
         self.keysight_addr = ''#'USB0::0x0957::0x1807::MY58430132::INSTR' #name/address for the keysight connected to the computer
         self.daq_path = ''#'Dev2/ao0' #the path to the daq
         self.dmm_addr = ''#'ASRL6::INSTR' #address of USB connected to computer
@@ -77,12 +81,12 @@ class MainWindow(QMainWindow):
         ##### INSTRUMENT SETTINGS DROPDOWNS
         self.inst_settings_lbl = QLabel('Instrument Settings', self)
         self.inst_settings_lbl.setFont(QFont('Arial', 14))
-        #freq counter select
+        # freq counter select
         self.select_freq_counter_drpdn = QComboBox()
         self.select_freq_counter_drpdn.addItems(['Select Keysight Location'])
         self.select_freq_counter_drpdn.addItems(self.my_instruments)
         self.select_freq_counter_drpdn.activated.connect(self.select_fc)
-        #dmm select
+        # dmm select
         self.select_dmm_drpdn = QComboBox()
         self.select_dmm_drpdn.addItems(['Select DMM Location'])
         self.select_dmm_drpdn.addItems(self.my_instruments)
@@ -133,6 +137,9 @@ class MainWindow(QMainWindow):
         #stop data collection and close instrument connections
         self.stop_data_collection_btn = QPushButton("Stop Data Collection")
         self.stop_data_collection_btn.clicked.connect(self.stop_collection)
+        #reset data collection for new session
+        self.reset_data_collection_btn = QPushButton("Reset Data Collection")
+        self.reset_data_collection_btn.clicked.connect(self.reset)
     
 
         ####DATA PLOTTING
@@ -140,7 +147,7 @@ class MainWindow(QMainWindow):
         self.plot_curve = LiveLinePlot()
         self.plot_widget.addItem(self.plot_curve)
         self.running = True
-        self.data_connector = DataConnector(self.plot_curve, max_points=150)
+        self.data_connector = DataConnector(self.plot_curve, max_points=750)
 
         ### APP LAYOUT ###################################################################################
         gridlayout = QGridLayout()
@@ -204,6 +211,7 @@ class MainWindow(QMainWindow):
         btns = QVBoxLayout()
         btns.addWidget(self.start_data_collection_btn)
         btns.addWidget(self.stop_data_collection_btn)
+        btns.addWidget(self.reset_data_collection_btn)
         btn_container = QWidget()
         btn_container.setLayout(btns)
     
@@ -219,15 +227,19 @@ class MainWindow(QMainWindow):
         #add the plot to all this
         layout.addWidget(grid_container) 
         layout.addWidget(self.plot_widget) #plot region
-        container = QWidget()
-        container.setLayout(layout)
-        self.setCentralWidget(container)
+        self.container = QWidget()
+        self.container.setLayout(layout)
+        self.setCentralWidget(self.container)
         
         #unclear if I actually need this, but I think this shows all the available widgets?
         self.show()
         app.aboutToQuit.connect(self.close_event)
 
     #### FUNCTIONS! #############################################
+
+    def reset(self):
+        self.container.update()
+        print("test")
 
     #### User Input and Setup ####################
     def open_file_dialog(self):
@@ -284,8 +296,23 @@ class MainWindow(QMainWindow):
     #### Data collection functions
 
     def start_collection(self):
+        self.verify_user_inputs()
+        #once user inputs are verified, if I want to do realtime correction, I need to set up DMM conversion ahead of time
+        self.voltageConversion = kse.getVoltstoHzConversion(self.alkali_metal, self.energy_level)
+
          # Start data collection in new Thread and send data to data_connector
-        Thread(target=self.get_frequency_data, args=(self.data_connector,)).start()
+        if(self.inputs_verifed):
+            self.t1 = Thread(target=self.get_frequency_data, args=(self.data_connector,))
+            self.t1.start()
+        #if(self.inputs_verifed):
+            #t1 = multiprocessing.Process(target=self.get_frequency_data, args=(self.data_connector,))
+            #t1.start()
+            #self.all_processes.appennd(t1)
+        
+    #def terminate_threads(self):
+    #    for t in self.all_processes:
+    #        t.terminate()
+            
 
     
     def freq_initialization_pass(self):
@@ -326,15 +353,21 @@ class MainWindow(QMainWindow):
                 y = float(self.freq_counter.query('FETC?'))
                 #get dmm data
                 y2 = float(self.dmm.ask('FETC?'))#self.dmm.ask('TRAC:DATA?')
-
+                
                 #check that it's not an error value
                 #only add a new data point to the set of arrays if both the keysight and the dmm return valid values
                 if((y < 100000000000) and (y2 < 100000000000)):
                     self.frequencies.append(y)
                     self.dmm_vals.append(y2)
                     self.time_intervals.append(x)
+
+                    #on the fly frequency correction goes here!
+                    #first convert the DMM value to frequency 
+                    deltaDMM = y2 - self.dmm_vals[0] #get difference between inital DMM and current
+                    y_corrected = deltaDMM*self.voltageConversion #multiply change in DMM val by voltage conversion factor to get frequency
+
                     #send the data to the connector, but only if both keysight and dmm provide acceptable data
-                    connector.cb_append_data_point(y, x)
+                    connector.cb_append_data_point(y_corrected, x)
                 #increment the count so that I can batch update the csv instead of doing it each round
                 #hopefully this is more efficient?
                 #update when length of array is 10, clear storage arrays after update
@@ -367,9 +400,7 @@ class MainWindow(QMainWindow):
         #outside the while loop, if we get here then close all the connections
         self.closing_tasks()
 
-    def connect_to_instruments(self):
-        #first we need to check that we have all the necessary inputs from the user 
-        #if any of these are missing warn the user, via pop up probably
+    def verify_user_inputs(self):
         if(self.folder==''):
             self.missing_info_warning_popup('Data Collection File Location')
         elif(self.keysight_addr==''):
@@ -382,60 +413,64 @@ class MainWindow(QMainWindow):
             self.missing_info_warning_popup('Alkali Metal')
         elif(self.energy_level==''):
             self.missing_info_warning_popup('Energy Level')
-        else:
-            self.error_counter = 0
-            #reset the data connector?
-            self.data_connector = DataConnector(self.plot_curve, max_points=60)
-            #do all the document prep at the beginning so it doesn't slow down collection later
-            #create a new csv file at the specified location
-            self.filename = util.dtStringForFilename()+'.csv'
-            self.fp = self.folder + '\\' + self.filename
-            self.outfile = open(self.fp, mode='a')
-            #create an empty data frame and save the headers to the file
-            self.df_headers = pd.DataFrame({'Frequencies': [], 'Voltages': [], 'Time Interval':[]})
-            self.df_headers.to_csv(self.fp, mode='a', index=False)
+        else: 
+            self.inputs_verifed = True
+
+    def connect_to_instruments(self):
+        self.error_counter = 0
+        #reset the data connector?
+        #self.data_connector = DataConnector(self.plot_curve, max_points=150)
+        #do all the document prep at the beginning so it doesn't slow down collection later
+        #create a new csv file at the specified location
+        self.filename = util.dtStringForFilename()+'.csv'
+        self.fp = self.folder + '\\' + self.filename
+        self.outfile = open(self.fp, mode='a')
+        #create an empty data frame and save the headers to the file
+        self.df_headers = pd.DataFrame({'Frequencies': [], 'Voltages': [], 'Time Interval':[]})
+        self.df_headers.to_csv(self.fp, mode='a', index=False)
             
-            # Keysight connection setup
-            self.freq_counter = self.rm.open_resource(self.keysight_addr)
-            self.freq_counter.write('*RST')
-            self.freq_counter.encoding = 'latin_1'
-            self.freq_counter.source_channel = 'CH1'
+        # Keysight connection setup
+        self.freq_counter = self.rm.open_resource(self.keysight_addr)
+        self.freq_counter.write('*RST')
+        self.freq_counter.encoding = 'latin_1'
+        self.freq_counter.source_channel = 'CH1'
 
-            # Keysight data collection set up
-            ## reset everything and clear the event queues
-            self.freq_counter.write('STAT:PRES')
-            self.freq_counter.write('*CLS')
-            ## set the type of measurement to frequency
-            self.freq_counter.write('CONF:FREQ')
-            self.freq_counter.write(self.trig_source_cmd)
-            self.freq_counter.write('TRIG:SLOP POS')
-            #self.freq_counter.write(self.trig_count_cmd)
+        # Keysight data collection set up
+        ## reset everything and clear the event queues
+        self.freq_counter.write('STAT:PRES')
+        self.freq_counter.write('*CLS')
+        ## set the type of measurement to frequency
+        self.freq_counter.write('CONF:FREQ')
+        self.freq_counter.write(self.trig_source_cmd)
+        self.freq_counter.write('TRIG:SLOP POS')
+        #self.freq_counter.write(self.trig_count_cmd)
 
-            # DAQ Setup and task initialization
-            self.task = nidaqmx.Task()
-            self.task.ao_channels.add_ao_voltage_chan(self.daq_path)
-            self.task.start()
-            self.task.write(0.0)#make sure we are starting at 0V
+        # DAQ Setup and task initialization
+        self.task = nidaqmx.Task()
+        self.task.ao_channels.add_ao_voltage_chan(self.daq_path)
+        self.task.start()
+        self.task.write(0.0)#make sure we are starting at 0V
 
-            #Keithley dmm connection set up
-            self.adapter = PrologixAdapter(self.dmm_addr, self.gpib_channel_no) #create prologix adapter and connect to GPIB w/ address 1
-            self.dmm = Keithley2000(self.adapter) #create the instrument using the adapter
+        #Keithley dmm connection set up
+        self.adapter = PrologixAdapter(self.dmm_addr, self.gpib_channel_no) #create prologix adapter and connect to GPIB w/ address 1
+        self.dmm = Keithley2000(self.adapter) #create the instrument using the adapter
 
-            # Keithley data collection set up
-            ## reset everything and clear the event queues
-            self.dmm.reset()
-            ## need to set trigger type to external
-            self.dmm.write(self.trig_source_cmd)
-            ## set trigger count to the desired number of datapoints per collection cycle
-            self.dmm.write(self.trig_count_cmd)
-            ## set sample count to 1 (this is one sample per trigger)
-            self.dmm.write('SAMP:COUN 1')
-            self.user_feedback_lbl_2.setText("Connected to frequency counter and dmm")
+        # Keithley data collection set up
+        ## reset everything and clear the event queues
+        self.dmm.reset()
+        ## need to set trigger type to external
+        self.dmm.write(self.trig_source_cmd)
+        ## set trigger count to the desired number of datapoints per collection cycle
+        self.dmm.write(self.trig_count_cmd)
+        ## set sample count to 1 (this is one sample per trigger)
+        self.dmm.write('SAMP:COUN 1')
+        self.user_feedback_lbl_2.setText("Connected to frequency counter and dmm")
     
     def stop_collection(self):
         self.running = False
         self.user_feedback_lbl_2.setText("Ending data collection")
         time.sleep(1)#allow the program to finish writing any remaining data to the csv before processing it
+        self.t1.join()
         self.process_collected_data()
         self.user_feedback_lbl_2.setText("Data processing complete. ")    
 
@@ -459,10 +494,11 @@ class MainWindow(QMainWindow):
         self.outfile.close()
         #close the connections
         self.openres = self.rm.list_opened_resources()
-        self.user_feedback_lbl_2.setText('Closing Connection with ', str(self.openres))
+        #self.user_feedback_lbl_2.setText('Closing Connection with ', str(self.openres))
         self.freq_counter.close()
         self.adapter.close()
         self.rm.close()
+        #self.terminate_threads()
 
     def close_event(self):
         if (self.running == True):
@@ -484,11 +520,14 @@ class MainWindow(QMainWindow):
         processed_data = kse.processAllData_rt(filepath_raw, 'rb85', 'high')
         kse.createCSVProcessedData(filepath_converted, processed_data)
     
+    
+
+
 
 
 if __name__ == '__main__':
         
-    app = QApplication([])
+    app = QApplication(sys.argv)
     window = MainWindow()
     window.show()
-    app.exec()
+    sys.exit(app.exec_())
