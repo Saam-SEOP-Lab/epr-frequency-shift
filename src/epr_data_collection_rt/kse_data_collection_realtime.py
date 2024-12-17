@@ -65,6 +65,8 @@ class MainWindow(QMainWindow):
         self.frequencies = []
         self.dmm_vals = []
         self.time_intervals = [] #human readable time intervals go here
+        self.initialDMM = 0
+        self.initialFreq = 0
 
         ### GUI STUFF - EVERYTHING IN THIS SECTION WILL BE VISIBLE TO THE USER AS WIDGETS IN THE APP  ######################################
         self.setWindowTitle("K_se Data Collection")
@@ -121,6 +123,12 @@ class MainWindow(QMainWindow):
         self.select_energy_lvl_drpdn.activated.connect(self.select_energy_level)
         self.energy_lbl = QLabel('Energy: ', self)
         self.energy_lbl.setFont(QFont('Arial', 11))
+        #last time collected display (this is only here because this is going to appear near these other components)
+        self.last_time = 'Time Not available'
+        self.last_time_collected_lbl = QLabel('Last time collected:')#label for the time display
+        self.last_time_collected_lbl.setFont(QFont('Ariel', 11))
+        self.last_time_collected_disp = QLabel(self.last_time)#the actual time display
+        self.last_time_collected_disp.setFont(QFont('Ariel', 14))
 
 
         ### DATA COLLECTION BUTTONS AND USER FEEDBACK
@@ -140,6 +148,7 @@ class MainWindow(QMainWindow):
         #reset data collection for new session
         self.reset_data_collection_btn = QPushButton("Reset Data Collection")
         self.reset_data_collection_btn.clicked.connect(self.reset)
+        
     
 
         ####DATA PLOTTING
@@ -200,10 +209,16 @@ class MainWindow(QMainWindow):
         data_proc_energy_container = QWidget()
         data_proc_energy_container.setLayout(data_proc_energy)
 
+        #time_display = QVBoxLayout()
+        #time_display.addWidget(self.last_time_collected_lbl)
+        #time_display_container = QWidget()
+        #time_display_container.setLayout(time_display)
+
         data_proc = QVBoxLayout()
         data_proc.addWidget(self.proc_settings_lbl)
         data_proc.addWidget(data_proc_metal_container)
         data_proc.addWidget(data_proc_energy_container)
+        #data_proc.addWidget(time_display)
         data_proc_container = QWidget()
         data_proc_container.setLayout(data_proc)
         
@@ -359,12 +374,21 @@ class MainWindow(QMainWindow):
                 if((y < 100000000000) and (y2 < 100000000000)):
                     self.frequencies.append(y)
                     self.dmm_vals.append(y2)
+                    #if this is the first dmm value of the first round, set that to initial dmm value
+                    if(len(self.times)<=10 and self.initialDMM==0 and self.initialFreq==0):
+                        self.initialDMM = y2
+                        self.initialFreq = y
+
                     self.time_intervals.append(x)
+
 
                     #on the fly frequency correction goes here!
                     #first convert the DMM value to frequency 
-                    deltaDMM = y2 - self.dmm_vals[0] #get difference between inital DMM and current
-                    y_corrected = deltaDMM*self.voltageConversion #multiply change in DMM val by voltage conversion factor to get frequency
+                    DMM_adjustment = (y2 - self.initialDMM)*self.voltageConversion #get difference between inital DMM and current
+                    #then zero out the frequency value using the first collected points
+                    freq_zeroed = y - self.initialFreq
+                    #then subtract the DMM correction from the zeroed frequency value
+                    y_corrected = freq_zeroed-DMM_adjustment 
 
                     #send the data to the connector, but only if both keysight and dmm provide acceptable data
                     connector.cb_append_data_point(y_corrected, x)
@@ -396,6 +420,7 @@ class MainWindow(QMainWindow):
                 # I need to figure out how to distinguish which types of errors are happening because only some require a shutdown
                 if(self.error_counter == self.error_threshold):
                     self.closing_tasks()
+           
 
         #outside the while loop, if we get here then close all the connections
         self.closing_tasks()
@@ -499,6 +524,8 @@ class MainWindow(QMainWindow):
         self.adapter.close()
         self.rm.close()
         #self.terminate_threads()
+        self.initialDMM = 0
+        self.initialFreq = 0
 
     def close_event(self):
         if (self.running == True):
