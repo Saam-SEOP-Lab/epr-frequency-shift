@@ -4,7 +4,6 @@ import pyvisa as visa
 import pandas as pd
 import nidaqmx.system as syst
 import sys
-import multiprocessing
 
 import kse_experiment_utils as kse
 import utilities as util
@@ -36,6 +35,10 @@ class MainWindow(QMainWindow):
         self.energy_levels = ['high', 'low']
         self.inputs_verifed = False
         self.all_processes = []
+        #create empty variables for all my instrument addresses?
+        self.adapter = None
+        self.dmm = None
+
         # Collection parameters
         ## parameters that will remain hard coded
         self.trig_count = 1
@@ -124,10 +127,10 @@ class MainWindow(QMainWindow):
         self.energy_lbl = QLabel('Energy: ', self)
         self.energy_lbl.setFont(QFont('Arial', 11))
         #last time collected display (this is only here because this is going to appear near these other components)
-        self.last_time = 'Time Not available'
+        self.not_available = 'Time Not available'
         self.last_time_collected_lbl = QLabel('Last time collected:')#label for the time display
         self.last_time_collected_lbl.setFont(QFont('Ariel', 11))
-        self.last_time_collected_disp = QLabel(self.last_time)#the actual time display
+        self.last_time_collected_disp = QLabel(self.not_available)#the actual time display
         self.last_time_collected_disp.setFont(QFont('Ariel', 14))
 
 
@@ -136,9 +139,10 @@ class MainWindow(QMainWindow):
         self.user_feedback_lbl_2 = QLabel('Select instrument locations and processing parameters. Then click "Start Data Collection" to begin. \nTo stop collection click "Stop Data Collection"', self)
         self.user_feedback_lbl_2.setFont(QFont('Arial', 12))
         #Data Collection Buttons
+        ##### Remove these commented out buttons later because I am apparently not using them AT ALL
         #initialize collection/connect to everything
-        self.initialize_data_collection_btn = QPushButton("Initialize Data Collection")
-        self.initialize_data_collection_btn.clicked.connect(self.connect_to_instruments)
+        #self.initialize_data_collection_btn = QPushButton("Initialize Data Collection")
+        #self.initialize_data_collection_btn.clicked.connect(self.connect_to_instruments)
         #start data collection
         self.start_data_collection_btn = QPushButton("Start Data Collection")
         self.start_data_collection_btn.clicked.connect(self.start_collection)
@@ -147,10 +151,8 @@ class MainWindow(QMainWindow):
         self.stop_data_collection_btn.clicked.connect(self.stop_collection)
         #reset data collection for new session
         self.reset_data_collection_btn = QPushButton("Reset Data Collection")
-        self.reset_data_collection_btn.clicked.connect(self.reset)
+        self.reset_data_collection_btn.clicked.connect(self.closing_tasks)#self.reset
         
-    
-
         ####DATA PLOTTING
         self.plot_widget = LivePlotWidget(title="Frequency (Hz) vs. Time (s )")
         self.plot_curve = LiveLinePlot()
@@ -197,28 +199,32 @@ class MainWindow(QMainWindow):
         drpdn_container = QWidget()
         drpdn_container.setLayout(dropdown)
 
-        #data processing parameter selection
+        #data processing parameter selection and also the timer because I have to put it somewhere and it works here
+        ##alkali metal selection
         data_proc_metal = QHBoxLayout()
         data_proc_metal.addWidget(self.metal_lbl)        
         data_proc_metal.addWidget(self.select_metal_drpdn)
         data_proc_metal_container = QWidget()
         data_proc_metal_container.setLayout(data_proc_metal)
+        ##energy transition selection
         data_proc_energy = QHBoxLayout()
         data_proc_energy.addWidget(self.energy_lbl)        
         data_proc_energy.addWidget(self.select_energy_lvl_drpdn)
         data_proc_energy_container = QWidget()
         data_proc_energy_container.setLayout(data_proc_energy)
+        ##display this timer thing
+        time_display = QHBoxLayout()
+        time_display.addWidget(self.last_time_collected_lbl)
+        time_display.addWidget(self.last_time_collected_disp)
+        time_display_container = QWidget()
+        time_display_container.setLayout(time_display)
 
-        #time_display = QVBoxLayout()
-        #time_display.addWidget(self.last_time_collected_lbl)
-        #time_display_container = QWidget()
-        #time_display_container.setLayout(time_display)
-
+        #set up the elements on the Processing Parameters and also Time Display side of the screen
         data_proc = QVBoxLayout()
         data_proc.addWidget(self.proc_settings_lbl)
         data_proc.addWidget(data_proc_metal_container)
         data_proc.addWidget(data_proc_energy_container)
-        #data_proc.addWidget(time_display)
+        data_proc.addWidget(time_display_container)
         data_proc_container = QWidget()
         data_proc_container.setLayout(data_proc)
         
@@ -324,12 +330,10 @@ class MainWindow(QMainWindow):
             #t1.start()
             #self.all_processes.appennd(t1)
         
-    #def terminate_threads(self):
-    #    for t in self.all_processes:
-    #        t.terminate()
+    def terminate_threads(self):
+        for t in self.all_processes:
+            t.terminate()
             
-
-    
     def freq_initialization_pass(self):
         self.freq_counter.write('INIT')
         #do one trigger cycle to get rid of the empty data point that apparently gets collected for reasons?
@@ -345,6 +349,7 @@ class MainWindow(QMainWindow):
 
     def get_frequency_data(self, connector):
         self.connect_to_instruments()
+        #print(self.rm.list_resources_info())
         self.user_feedback_lbl_2.setText("Collecting data")
         self.error_counter = 0
         while(self.running):
@@ -362,6 +367,7 @@ class MainWindow(QMainWindow):
                 self.start_time = self.times[0]
             #time interval is last value of times minus start time value
             x = t1-self.start_time
+            self.last_time_collected_disp.setText(str(x))
 
             try:
                 #get the frequency data  
@@ -396,6 +402,7 @@ class MainWindow(QMainWindow):
                 #hopefully this is more efficient?
                 #update when length of array is 10, clear storage arrays after update
                 if (len(self.frequencies)==self.csv_write_batch_num):
+                    #print(self.frequencies)
                     self.update_csv(self.frequencies, self.dmm_vals, self.time_intervals)
                     self.frequencies=[]
                     self.dmm_vals=[] 
@@ -420,10 +427,12 @@ class MainWindow(QMainWindow):
                 # I need to figure out how to distinguish which types of errors are happening because only some require a shutdown
                 if(self.error_counter == self.error_threshold):
                     self.closing_tasks()
+                    #self.reset_tasks()
            
 
         #outside the while loop, if we get here then close all the connections
-        self.closing_tasks()
+        #self.closing_tasks()
+        #self.reset_tasks()
 
     def verify_user_inputs(self):
         if(self.folder==''):
@@ -454,7 +463,7 @@ class MainWindow(QMainWindow):
         self.df_headers = pd.DataFrame({'Frequencies': [], 'Voltages': [], 'Time Interval':[]})
         self.df_headers.to_csv(self.fp, mode='a', index=False)
             
-        # Keysight connection setup
+        # Keysight connection setup        
         self.freq_counter = self.rm.open_resource(self.keysight_addr)
         self.freq_counter.write('*RST')
         self.freq_counter.encoding = 'latin_1'
@@ -477,8 +486,10 @@ class MainWindow(QMainWindow):
         self.task.write(0.0)#make sure we are starting at 0V
 
         #Keithley dmm connection set up
-        self.adapter = PrologixAdapter(self.dmm_addr, self.gpib_channel_no) #create prologix adapter and connect to GPIB w/ address 1
-        self.dmm = Keithley2000(self.adapter) #create the instrument using the adapter
+        #check for already created adapters?
+        if (self.adapter == None and self.dmm==None): 
+            self.adapter = PrologixAdapter(self.dmm_addr, self.gpib_channel_no) #create prologix adapter and connect to GPIB w/ address 1
+            self.dmm = Keithley2000(self.adapter) #create the instrument using the adapter
 
         # Keithley data collection set up
         ## reset everything and clear the event queues
@@ -492,13 +503,44 @@ class MainWindow(QMainWindow):
         self.user_feedback_lbl_2.setText("Connected to frequency counter and dmm")
     
     def stop_collection(self):
+        #set running flag to false so that the processing loop will close
         self.running = False
         self.user_feedback_lbl_2.setText("Ending data collection")
         time.sleep(1)#allow the program to finish writing any remaining data to the csv before processing it
         self.t1.join()
+        #process data and save it all to the file, the CLOSE THE FILE
         self.process_collected_data()
-        self.user_feedback_lbl_2.setText("Data processing complete. ")    
+        self.user_feedback_lbl_2.setText("Data processing complete. ")
+        #then we need to close all the processes and connections that are just hanging out, in the open
+        self.task.close() #close the daq tasks 
+        self.dmm.clear()
+        self.adapter.close()
+        self.freq_counter.clear()
+        self.freq_counter.close()
+        self.dmm = None
+        self.adapter = None
 
+        #clean up the threads? I think?
+        self.terminate_threads()
+
+        #reset all the initial values 
+        self.start_time = None
+        self.times = [] 
+        self.frequencies = []
+        self.dmm_vals = []
+        self.time_intervals = [] #human readable time intervals go here
+        self.initialDMM = 0
+        self.initialFreq = 0
+        #reset the timer display back to it's initial state
+        self.last_time_collected_disp.setText(self.not_available)
+
+        #fully reset and reconnect to the resource manager?
+        #self.rm.close()
+        #self.rm = visa.ResourceManager()
+        self.user_feedback_lbl_2.setText("Data processing complete. Ready for Data Collection.")
+
+        #self.reset_tasks()
+        
     def update_csv(self, f, v, t):
         df = pd.DataFrame({
                 'Frequency': f,
@@ -510,13 +552,43 @@ class MainWindow(QMainWindow):
     ### End of data collection functions section
            
     ### Clean up functions #############
+    
+    #I want to resolve the issue of having to totally restart the app to do a new collection so I will be making a distinction between
+    #tasks done when prepping to end collection so that another round can happen and tasks done to close the entire app
+
+    def reset_tasks(self):  
+        #set all of the start variables back to what they need to be
+        #send any reset commands needed to the instruments
+        #close threads so we can reopen them? IDK
+
+        self.task.close()
+        #close the file we were writing to
+        self.outfile.close()
+        #clear our all the arrays probably
+        self.rm.close()
+        self.adapter = None
+        self.dmm = None
+        self.start_time = None
+        self.times = [] 
+        self.frequencies = []
+        self.dmm_vals = []
+        self.time_intervals = [] #human readable time intervals go here
+        self.initialDMM = 0
+        self.initialFreq = 0
+        
+        #reset the timer display back to it's initial state
+        self.last_time_collected_disp.setText(self.not_available)
+        #only do this one everything is ready to go
+        self.user_feedback_lbl_2.setText("Data processing complete. Ready for Data Collection.")
+        self.rm = visa.ResourceManager() #probably a bad idea but, idk fuck it. 
+
+
     #I've copied and pasted this block enough that it should have been it's own function ages ago       
     def closing_tasks(self):
         #outside the while loop, if we get here then close all the connections
         #close the DAQ taks
         self.task.close()
-        #close the csv file
-        self.outfile.close()
+
         #close the connections
         self.openres = self.rm.list_opened_resources()
         #self.user_feedback_lbl_2.setText('Closing Connection with ', str(self.openres))
@@ -524,9 +596,9 @@ class MainWindow(QMainWindow):
         self.adapter.close()
         self.rm.close()
         #self.terminate_threads()
-        self.initialDMM = 0
-        self.initialFreq = 0
 
+        
+    #this one should only be used when closing the actual app.
     def close_event(self):
         if (self.running == True):
             self.running == False
@@ -544,8 +616,11 @@ class MainWindow(QMainWindow):
         fn_arry = (self.filename).split('.')
         fn = fn_arry[0]+'.'+fn_arry[1]+'_processed.csv'
         filepath_converted = self.folder + '\\' + fn
-        processed_data = kse.processAllData_rt(filepath_raw, 'rb85', 'high')
+        processed_data = kse.processAllData_rt(filepath_raw, self.alkali_metal, self.energy_level)
         kse.createCSVProcessedData(filepath_converted, processed_data)
+        #close the file when you are done you heathen. 
+        self.outfile.close()
+
     
     
 

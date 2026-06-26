@@ -10,13 +10,13 @@ import csv
 
 ########## IMPORTANT CONTSANTS ############################################################################################################
 
-rb87_gyromagnetic_ratio_HE = -687948.167 #Hz/Gauss
-rb85_gyromagnetic_ratio_HE = -447338.733 #Hz/Gauss
-cs133_gyromagnetic_ratio_HE = -344814.813 #Hz/Gauss
+rb87_gyromagnetic_ratio_HE = -686802 #Hz/Gauss
+rb85_gyromagnetic_ratio_HE = -445427 #Hz/Gauss
+cs133_gyromagnetic_ratio_HE = -344818 #Hz/Gauss
 
-rb87_gyromagnetic_ratio_LE = -711218.443 #Hz/Gauss
-rb85_gyromagnetic_ratio_LE = -486146.856 #Hz/Gauss
-cs133_gyromagnetic_ratio_LE = -354909.377 #Hz/Gauss
+rb87_gyromagnetic_ratio_LE = -712365 #Hz/Gauss
+rb85_gyromagnetic_ratio_LE = -488059 #Hz/Gauss
+cs133_gyromagnetic_ratio_LE = -355407 #Hz/Gauss
 
 
 conv_fact_V = 0.1 #Volts
